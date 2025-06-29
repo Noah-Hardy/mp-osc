@@ -47,7 +47,7 @@ uv pip install opencv-python mediapipe python-osc
 uv venv
 source .venv/bin/activate
 uv pip install opencv-python mediapipe python-osc
-uv run python live_analysis.py
+uv run python server.py
 ```
 
 4. View the output:
@@ -60,21 +60,71 @@ uv run python live_analysis.py
 
 ## OSC Message Structure
 
-- Per-landmark messages
-Sent on `/pose/{idx}`, `/right_hand/{idx}`, `/left_hand{idx}` as JSON Strings
+## OSC Message Structure
+
+### V2 -> Separate OSC Bundles (Current)
+
+Pose, right hand, and left hand landmarks are each sent as their own JSON bundle on separate OSC channels. Each message contains a timestamp and an array of all detected landmarks for that group, each with its id and coordinates (rounded to two decimal places). Pose landmarks include visibility; hand landmarks do not.
+
+#### OSC Channels
+
+- `/pose` (JSON String): Contains only pose landmarks.
+- `/right_hand` (JSON String): Contains only right hand landmarks.
+- `/left_hand` (JSON String): Contains only left hand landmarks.
+- `/bounds` (JSON String): Contains calculated bounds from pose landmarks
+
+#### Example Payloads
+
+**Pose Landmarks** (`/pose`):
 ```json
 {
   "timestamp": 1720000000.123,
-  "id": 15,
-  "x": 0.5,
-  "y": 0.6,
-  "z": -0.1,
-  "visibility": 0.98
+  "landmarks": [
+    {
+      "id": 0,
+      "x": 0.52,
+      "y": 0.48,
+      "z": -0.12,
+      "visibility": 0.98
+    },
+    // ... more pose landmark objects ...
+  ]
 }
 ```
-(Hand landmarks do not include visibility)
-- Pose bounds message
-Sent on `/pose/bounds` as a JSON String
+
+**Right Hand Landmarks** (`/right_hand`):
+```json
+{
+  "timestamp": 1720000000.123,
+  "landmarks": [
+    {
+      "id": 5,
+      "x": 0.61,
+      "y": 0.33,
+      "z": -0.09
+    }
+    // ... more right hand landmark objects ...
+  ]
+}
+```
+
+**Left Hand Landmarks** (`/left_hand`):
+```json
+{
+  "timestamp": 1720000000.123,
+  "landmarks": [
+    {
+      "id": 12,
+      "x": 0.41,
+      "y": 0.67,
+      "z": -0.15
+    }
+    // ... more left hand landmark objects ...
+  ]
+}
+```
+
+**Pose Bounds** (`/bounds`):
 ```json
 {
   "max_x": {"id": 23, "x": 0.9, "y": 0.5, "z": -0.1, "visibility": 0.99},
@@ -84,7 +134,46 @@ Sent on `/pose/bounds` as a JSON String
   "max_z": {"id": 12, "x": 0.6, "y": 0.4, "z": 0.2, "visibility": 0.97},
   "min_z": {"id": 5, "x": 0.3, "y": 0.7, "z": -0.5, "visibility": 0.95}
 }
+
+#### JSON Schemas
+
+**Pose Landmarks**
+```json
+{
+  "timestamp": "number (float, UNIX seconds)",
+  "landmarks": [
+    {
+      "id": "integer (landmark index)",
+      "x": "number (float, 2 decimals)",
+      "y": "number (float, 2 decimals)",
+      "z": "number (float, 2 decimals)",
+      "visibility": "number (float, 2 decimals)"
+    }
+    // ...
+  ]
+}
 ```
+
+**Hand Landmarks** (Right or Left)
+```json
+{
+  "timestamp": "number (float, UNIX seconds)",
+  "landmarks": [
+    {
+      "id": "integer (landmark index)",
+      "x": "number (float, 2 decimals)",
+      "y": "number (float, 2 decimals)",
+      "z": "number (float, 2 decimals)"
+    }
+    // ...
+  ]
+}
+```
+
+##### Notes
+- `/pose` only contains pose landmarks (with visibility).
+- `/right_hand` and `/left_hand` only contain their respective hand landmarks (no visibility).
+- All coordinates are normalized and rounded to two decimal places.
 
 ## Customization
 
