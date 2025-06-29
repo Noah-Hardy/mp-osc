@@ -134,6 +134,7 @@ Pose, right hand, and left hand landmarks are each sent as their own JSON bundle
   "max_z": {"id": 12, "x": 0.6, "y": 0.4, "z": 0.2, "visibility": 0.97},
   "min_z": {"id": 5, "x": 0.3, "y": 0.7, "z": -0.5, "visibility": 0.95}
 }
+```
 
 #### JSON Schemas
 
