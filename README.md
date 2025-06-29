@@ -60,9 +60,7 @@ uv run python server.py
 
 ## OSC Message Structure
 
-## OSC Message Structure
-
-### V2 -> Separate OSC Bundles (Current)
+### V2 -> Union OSC Bundles (Current)
 
 Pose, right hand, and left hand landmarks are each sent as their own JSON bundle on separate OSC channels. Each message contains a timestamp and an array of all detected landmarks for that group, each with its id and coordinates (rounded to two decimal places). Pose landmarks include visibility; hand landmarks do not.
 
