@@ -4,12 +4,10 @@ import cv2
 import mediapipe as mp
 from pythonosc import udp_client
 
-
-
 def get_pose_bounds_with_values(results):
-    max_x = max_y = float('-inf')
-    min_x = min_y = float('inf')
-    max_x_idx = max_y_idx = min_x_idx = min_y_idx = -1
+    max_x = max_y = max_z = float('-inf')
+    min_x = min_y = min_z = float('inf')
+    max_x_idx = max_y_idx = min_x_idx = min_y_idx = max_z_idx = min_z_idx = -1
 
     for idx, landmark in enumerate(results.pose_landmarks.landmark):
         if landmark.x > max_x:
@@ -24,12 +22,20 @@ def get_pose_bounds_with_values(results):
         if landmark.y < min_y:
             min_y = landmark.y
             min_y_idx = idx
+        if landmark.z > max_z:
+            max_z = landmark.z
+            max_z_idx = idx
+        if landmark.z < min_z:
+            min_z = landmark.z
+            min_z_idx = idx
 
     return {
         "max_x": landmark_dict(results, max_x_idx),
         "min_x": landmark_dict(results, min_x_idx),
         "max_y": landmark_dict(results, max_y_idx),
-        "min_y": landmark_dict(results, min_y_idx)
+        "min_y": landmark_dict(results, min_y_idx),
+        "max_z": landmark_dict(results, max_z_idx),
+        "min_z": landmark_dict(results, min_z_idx)
     }
 
 def landmark_dict(results,idx):

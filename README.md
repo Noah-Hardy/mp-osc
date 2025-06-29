@@ -4,7 +4,7 @@
 
 `live_analysis.py` is a Python script that uses [MediaPipe](https://google.github.io/mediapipe/) to perform real-time detection and tracking of human pose, hand, and face landmarks from a webcam video stream. The script visualizes these landmarks on the video feed and streams the landmark data over [OSC (Open Sound Control)](https://opensoundcontrol.stanford.edu/) to a specified network address, enabling integration with multimedia and creative coding environments.
 
-Additionally, the script calculates the pose landmark indices corresponding to the maximum and minimum x and y coordinates (the "bounds" of the pose) and sends this information, including each bound's id, x, y, z, and visibility, on a dedicated OSC channel.
+Additionally, the script calculates the pose landmark indices corresponding to the maximum and minimum x, y and z coordinates (the "bounds" of the pose) and sends this information, including each bound's id, x, y, z, and visibility, on a dedicated OSC channel.
 
 ## Features
 
@@ -55,6 +55,7 @@ uv run python live_analysis.py
     - OSC messages will be sent in real time for each detected landmark and for the pose bounds.
 
 5. Quit:
+    - A keypress of q will exit the window and stop the program
 
 
 ## OSC Message Structure
@@ -79,7 +80,9 @@ Sent on `/pose/bounds` as a JSON String
   "max_x": {"id": 23, "x": 0.9, "y": 0.5, "z": -0.1, "visibility": 0.99},
   "min_x": {"id": 11, "x": 0.1, "y": 0.6, "z": -0.2, "visibility": 0.98},
   "max_y": {"id": 27, "x": 0.5, "y": 0.95, "z": -0.3, "visibility": 0.97},
-  "min_y": {"id": 0, "x": 0.4, "y": 0.05, "z": -0.4, "visibility": 0.96}
+  "min_y": {"id": 0, "x": 0.4, "y": 0.05, "z": -0.4, "visibility": 0.96},
+  "max_z": {"id": 12, "x": 0.6, "y": 0.4, "z": 0.2, "visibility": 0.97},
+  "min_z": {"id": 5, "x": 0.3, "y": 0.7, "z": -0.5, "visibility": 0.95}
 }
 ```
 
