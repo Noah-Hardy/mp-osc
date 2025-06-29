@@ -1,15 +1,17 @@
-import mediapipe as mp
-import cv2
 import time
-from pythonosc import udp_client
 import json
+import cv2
+import mediapipe as mp
+from pythonosc import udp_client
 
-def get_pose_bounds_with_values(landmarks):
+
+
+def get_pose_bounds_with_values(results):
     max_x = max_y = float('-inf')
     min_x = min_y = float('inf')
     max_x_idx = max_y_idx = min_x_idx = min_y_idx = -1
 
-    for idx, landmark in enumerate(landmarks):
+    for idx, landmark in enumerate(results.pose_landmarks.landmark):
         if landmark.x > max_x:
             max_x = landmark.x
             max_x_idx = idx
@@ -23,30 +25,27 @@ def get_pose_bounds_with_values(landmarks):
             min_y = landmark.y
             min_y_idx = idx
 
-    def landmark_dict(idx):
-        lm = landmarks[idx]
-        return {
-            "id": idx,
-            "x": lm.x,
-            "y": lm.y,
-            "z": lm.z,
-            "visibility": getattr(lm, "visibility", None)
-        }
-
     return {
-        "max_x": landmark_dict(max_x_idx),
-        "min_x": landmark_dict(min_x_idx),
-        "max_y": landmark_dict(max_y_idx),
-        "min_y": landmark_dict(min_y_idx)
+        "max_x": landmark_dict(results, max_x_idx),
+        "min_x": landmark_dict(results, min_x_idx),
+        "max_y": landmark_dict(results, max_y_idx),
+        "min_y": landmark_dict(results, min_y_idx)
     }
 
-
+def landmark_dict(results,idx):
+    lm = results.pose_landmarks.landmark[idx]
+    return {
+        "id": idx,
+        "x": lm.x,
+        "y": lm.y,
+        "z": lm.z,
+        "visibility": getattr(lm, "visibility", None)
+    }
 
 osc_client = udp_client.SimpleUDPClient("192.168.1.28", 1234)
 
 mp_drawing = mp.solutions.drawing_utils
 mp_holistic = mp.solutions.holistic
-mp_objectron = mp.solutions.objectron
 
 cap = cv2.VideoCapture(0)
 
@@ -90,18 +89,8 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                 cv2.putText(frame, str(idx), (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1)
 
         # Calculate and send pose bounds with values
-            bounds = get_pose_bounds_with_values(pose_landmarks)
+            bounds = get_pose_bounds_with_values(results)
             osc_client.send_message("/pose/bounds", json.dumps(bounds))
-
-        if results.face_landmarks:
-            face_data = []
-            for idx, landmark in enumerate(results.face_landmarks.landmark):
-                face_data.append({
-                    "id": idx,
-                    "x": landmark.x,
-                    "y": landmark.y,
-                    "z": landmark.z
-                })
 
          # Extract and send right hand landmarks
         if results.right_hand_landmarks:
