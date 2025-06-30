@@ -28,11 +28,10 @@ markdown-it-py==3.0.0
 markupsafe==3.0.2
 matplotlib==3.9.4
 mdurl==0.1.2
-mediapipe==0.10.21
+mediapipe
 ml-dtypes==0.5.1
 mpmath==1.3.0
 namex==0.1.0
-ndi-python==5.1.1.5
 networkx==3.2.1
 numpy==1.26.4
 opencv-contrib-python==4.11.0.86
