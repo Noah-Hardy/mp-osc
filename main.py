@@ -89,8 +89,10 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
 
         # Gather all landmarks
         pose_landmarks = []
+        pose_world_landmarks = []
         right_hand_landmarks = []
         left_hand_landmarks = []
+        
         timestamp = time.time()
 
         # Pose landmarks
@@ -109,7 +111,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                 cx, cy = int(landmark.x * w), int(landmark.y * h)
                 cv2.putText(frame, str(idx), (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1)
         # Pose world landmarks
-        pose_world_landmarks = []
+        
         if results.pose_world_landmarks:
             for idx, landmark in enumerate(results.pose_world_landmarks.landmark):
                 pose_world_landmarks.append({
@@ -134,7 +136,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                 })
                 h, w, _ = frame.shape
                 cx, cy = int(landmark.x * w), int(landmark.y * h)
-                cv2.putText(frame, f"RH-{idx}", (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+                # cv2.putText(frame, f"RH-{idx}", (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
 
         # Left hand landmarks
         if results.left_hand_landmarks:
@@ -148,7 +150,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                 })
                 h, w, _ = frame.shape
                 cx, cy = int(landmark.x * w), int(landmark.y * h)
-                cv2.putText(frame, f"LH-{idx}", (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 1)
+                # cv2.putText(frame, f"LH-{idx}", (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 1)
 
 
         # Send all 8 channels
@@ -171,6 +173,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             osc_client.send_message("/pose/world", json.dumps(world_payload))
             world_bounds = get_pose_bounds_with_values(results.pose_world_landmarks.landmark)
             osc_client.send_message("/pose/world_bounds", json.dumps(world_bounds))
+            print(pose_world_landmarks[16])
 
         # /right_hand/raw
         if right_hand_landmarks:
@@ -231,23 +234,26 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             mp.solutions.drawing_utils.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
         )
 
-        mp.solutions.drawing_utils.draw_landmarks(
-            frame, 
-            results.right_hand_landmarks, 
-            mp_holistic.HAND_CONNECTIONS,
-            mp.solutions.drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4),
-            mp.solutions.drawing_utils.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2)
-        )
+        # mp.solutions.drawing_utils.draw_landmarks(
+        #     frame, 
+        #     results.right_hand_landmarks, 
+        #     mp_holistic.HAND_CONNECTIONS,
+        #     mp.solutions.drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4),
+        #     mp.solutions.drawing_utils.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2)
+        # )
 
-        mp.solutions.drawing_utils.draw_landmarks(
-            frame, 
-            results.left_hand_landmarks, 
-            mp_holistic.HAND_CONNECTIONS,
-            mp.solutions.drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4),
-            mp.solutions.drawing_utils.DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=2)
-        )
-
-        cv2.imshow('Pose and Hand Detection', frame)
+        # mp.solutions.drawing_utils.draw_landmarks(
+        #     frame, 
+        #     results.left_hand_landmarks, 
+        #     mp_holistic.HAND_CONNECTIONS,
+        #     mp.solutions.drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4),
+        #     mp.solutions.drawing_utils.DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=2)
+        # )
+        try:
+            cv2.imshow('Pose and Hand Detection', frame)
+        except Exception as e:
+            print(f"Error displaying frame: {e}")
+            continue
 
         if cv2.waitKey(10) & 0xFF == ord('q'):
             break
