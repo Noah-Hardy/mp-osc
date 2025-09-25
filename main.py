@@ -59,7 +59,8 @@ def landmark_dict(landmarks, idx):
 
 # Create an OSC client to send messages to a specified IP and port
 # Change the IP and port as needed for your OSC server
-osc_client = udp_client.SimpleUDPClient("192.168.1.28", 1234)
+# osc_client = udp_client.SimpleUDPClient("192.168.1.28", 1234)
+osc_client = udp_client.SimpleUDPClient("127.0.0.1", 1234)
 
 # Initialize Mediapipe drawing utilities and holistic model
 mp_drawing = mp.solutions.drawing_utils
@@ -67,7 +68,7 @@ mp_holistic = mp.solutions.holistic
 
 # Open a video capture stream
 # Change the camera index if needed (0 is usually the default camera)
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 # Start the Mediapipe holistic model for pose and hand detection
 # Adjust the detection and tracking confidence as needed
@@ -163,6 +164,9 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             osc_client.send_message("/pose/raw", json.dumps(osc_payload))
             bounds = get_pose_bounds_with_values(results.pose_landmarks.landmark)
             osc_client.send_message("/pose/raw_bounds", json.dumps(bounds))
+            osc_client.send_message("/mp/status", json.dumps({"status": 1}))
+        else:
+            osc_client.send_message("/mp/status", json.dumps({"status": 0}))
 
         # /pose/world
         if pose_world_landmarks:
@@ -173,7 +177,6 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             osc_client.send_message("/pose/world", json.dumps(world_payload))
             world_bounds = get_pose_bounds_with_values(results.pose_world_landmarks.landmark)
             osc_client.send_message("/pose/world_bounds", json.dumps(world_bounds))
-            print(pose_world_landmarks[16])
 
         # /right_hand/raw
         if right_hand_landmarks:
