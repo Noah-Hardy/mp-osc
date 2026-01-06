@@ -12,6 +12,8 @@ import os
 import time
 import json
 import platform
+import gc
+import sys
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -22,6 +24,20 @@ from .model_downloader import download_pose_model
 
 # Platform detection for GPU compatibility
 IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+def compact_json(data):
+    """
+    Create compact JSON string to minimize memory usage
+    Creates new string each time to avoid interning issues
+    """
+    # Use separators to minimize whitespace
+    json_str = json.dumps(data, separators=(',', ':'))
+    # Return as bytes to avoid string interning in Python
+    return json_str
 
 
 # ============================================================================
@@ -43,8 +59,16 @@ class PoseProcessor:
         self.show_fps = show_fps
         self.config = config
         self.fps_counter = 0
+        self.frame_counter = 0  # For garbage collection even without FPS display
         self.fps_start_time = time.time() if show_fps else None
         self.results = None  # For Tasks async results
+        self.pending_frames = 0  # Track frames in MediaPipe's async queue
+        self.max_pending_frames = 1  # Maximum frames to queue before skipping (reduced to 1 to prevent buildup)
+        self.skipped_frames = 0  # Count of frames skipped due to backpressure
+        
+        # Pre-allocated buffer for resizing to prevent memory fragmentation
+        self._resize_buffer = None
+        self._rgb_buffer = None
     
     # ------------------------------------------------------------------------
     # OSC data transmission methods
@@ -57,24 +81,24 @@ class PoseProcessor:
                 "timestamp": timestamp,
                 "landmarks": pose_landmarks
             }
-            self.osc_sender.send_message("/pose/raw", json.dumps(osc_payload))
+            self.osc_sender.send_message("/pose/raw", compact_json(osc_payload))
         
         if pose_world_landmarks:
             world_payload = {
                 "timestamp": timestamp,
                 "landmarks": pose_world_landmarks
             }
-            self.osc_sender.send_message("/pose/world", json.dumps(world_payload))
+            self.osc_sender.send_message("/pose/world", compact_json(world_payload))
     
     def send_bounds_data(self, landmarks, world_landmarks):
         """Send bounding box data via OSC (single pose)"""
         if landmarks:
             bounds = get_pose_bounds_with_values(landmarks)
-            self.osc_sender.send_message("/pose/raw_bounds", json.dumps(bounds))
+            self.osc_sender.send_message("/pose/raw_bounds", compact_json(bounds))
         
         if world_landmarks:
             world_bounds = get_pose_bounds_with_values(world_landmarks)
-            self.osc_sender.send_message("/pose/world_bounds", json.dumps(world_bounds))
+            self.osc_sender.send_message("/pose/world_bounds", compact_json(world_bounds))
     
     def send_empty_data(self, timestamp):
         """Send empty data to clear stale data on receiving machine"""
@@ -82,11 +106,11 @@ class PoseProcessor:
             "timestamp": timestamp,
             "landmarks": []
         }
-        self.osc_sender.send_message("/pose/raw", json.dumps(empty_payload))
-        self.osc_sender.send_message("/pose/raw_bounds", json.dumps({}))
-        self.osc_sender.send_message("/pose/world", json.dumps(empty_payload))
-        self.osc_sender.send_message("/pose/world_bounds", json.dumps({}))
-        self.osc_sender.send_message("/mp/status", json.dumps({"status": 0}))
+        self.osc_sender.send_message("/pose/raw", compact_json(empty_payload))
+        self.osc_sender.send_message("/pose/raw_bounds", compact_json({}))
+        self.osc_sender.send_message("/pose/world", compact_json(empty_payload))
+        self.osc_sender.send_message("/pose/world_bounds", compact_json({}))
+        self.osc_sender.send_message("/mp/status", compact_json({"status": 0}))
     
     def send_multiple_pose_data(self, all_pose_landmarks, all_pose_world_landmarks, timestamp):
         """Send data for multiple detected poses via OSC"""
@@ -96,16 +120,8 @@ class PoseProcessor:
                 "poses": all_pose_landmarks,
                 "count": len(all_pose_landmarks)
             }
-            self.osc_sender.send_message("/pose/multi_raw", json.dumps(multi_pose_payload))
-            
-            # Also send individual poses for backward compatibility
-            for i, pose_landmarks in enumerate(all_pose_landmarks):
-                individual_payload = {
-                    "timestamp": timestamp,
-                    "landmarks": pose_landmarks,
-                    "pose_id": i
-                }
-                self.osc_sender.send_message(f"/pose/raw_{i}", json.dumps(individual_payload))
+            self.osc_sender.send_message("/pose/multi_raw", compact_json(multi_pose_payload))
+            # Individual messages removed to prevent memory leak
         
         if all_pose_world_landmarks:
             multi_world_payload = {
@@ -113,48 +129,42 @@ class PoseProcessor:
                 "poses": all_pose_world_landmarks,
                 "count": len(all_pose_world_landmarks)
             }
-            self.osc_sender.send_message("/pose/multi_world", json.dumps(multi_world_payload))
-            
-            # Also send individual world poses for backward compatibility
-            for i, pose_world_landmarks in enumerate(all_pose_world_landmarks):
-                individual_world_payload = {
-                    "timestamp": timestamp,
-                    "landmarks": pose_world_landmarks,
-                    "pose_id": i
-                }
-                self.osc_sender.send_message(f"/pose/world_{i}", json.dumps(individual_world_payload))
+            self.osc_sender.send_message("/pose/multi_world", compact_json(multi_world_payload))
+            # Individual messages removed to prevent memory leak
     
     def send_multiple_bounds_data(self, all_landmarks, all_world_landmarks):
         """Send bounds data for multiple poses via OSC"""
         if all_landmarks:
             all_bounds = []
-            for i, landmarks in enumerate(all_landmarks):
+            for landmarks in all_landmarks:
                 bounds = get_pose_bounds_with_values(landmarks)
                 all_bounds.append(bounds)
-                # Send individual bounds for backward compatibility
-                self.osc_sender.send_message(f"/pose/raw_bounds_{i}", json.dumps(bounds))
+            # Individual messages removed to prevent memory leak
             
-            # Send combined bounds data
+            # Send combined bounds data only
             multi_bounds_payload = {
                 "poses": all_bounds,
                 "count": len(all_bounds)
             }
-            self.osc_sender.send_message("/pose/multi_raw_bounds", json.dumps(multi_bounds_payload))
+            self.osc_sender.send_message("/pose/multi_raw_bounds", compact_json(multi_bounds_payload))
+            # Clear temporary list
+            del all_bounds
         
         if all_world_landmarks:
             all_world_bounds = []
-            for i, world_landmarks in enumerate(all_world_landmarks):
+            for world_landmarks in all_world_landmarks:
                 world_bounds = get_pose_bounds_with_values(world_landmarks)
                 all_world_bounds.append(world_bounds)
-                # Send individual world bounds for backward compatibility
-                self.osc_sender.send_message(f"/pose/world_bounds_{i}", json.dumps(world_bounds))
+            # Individual messages removed to prevent memory leak
             
-            # Send combined world bounds data
+            # Send combined world bounds data only
             multi_world_bounds_payload = {
                 "poses": all_world_bounds,
                 "count": len(all_world_bounds)
             }
-            self.osc_sender.send_message("/pose/multi_world_bounds", json.dumps(multi_world_bounds_payload))
+            self.osc_sender.send_message("/pose/multi_world_bounds", compact_json(multi_world_bounds_payload))
+            # Clear temporary list
+            del all_world_bounds
 
     # ------------------------------------------------------------------------
     # Performance monitoring
@@ -162,13 +172,29 @@ class PoseProcessor:
     
     def update_fps(self, backend_name):
         """Update and display FPS if enabled (every 30 frames)"""
+        self.frame_counter += 1
+        
         if self.show_fps:
             self.fps_counter += 1
             if self.fps_counter % 30 == 0:
                 fps_end_time = time.time()
                 actual_fps = 30 / (fps_end_time - self.fps_start_time)
-                print(f"{backend_name} FPS: {actual_fps:.2f}")
+                # Get memory usage if psutil available
+                try:
+                    import psutil
+                    process = psutil.Process()
+                    mem_mb = process.memory_info().rss / 1024 / 1024
+                    osc_stats = self.osc_sender.get_stats()
+                    print(f"{backend_name} FPS: {actual_fps:.2f} | Memory: {mem_mb:.1f}MB | "
+                          f"OSC Sent: {osc_stats['sent']} Dropped: {osc_stats['dropped']} Queued: {osc_stats['queued']} | "
+                          f"MP Pending: {self.pending_frames} Skipped: {self.skipped_frames}")
+                except ImportError:
+                    print(f"{backend_name} FPS: {actual_fps:.2f} | Skipped: {self.skipped_frames}")
                 self.fps_start_time = fps_end_time
+        
+        # Force garbage collection every 30 frames to prevent memory buildup
+        if self.frame_counter % 30 == 0:
+            gc.collect()
 
 
 # ============================================================================
@@ -181,7 +207,7 @@ class TasksPoseProcessor(PoseProcessor):
     Recommended for new projects
     """
     
-    def __init__(self, osc_sender, show_fps=False, config=None, force_cpu=False, is_apple_silicon=None):
+    def __init__(self, osc_sender, show_fps=False, config=None, force_cpu=False, force_gpu=False, is_apple_silicon=None):
         """
         Initialize Tasks processor
         
@@ -190,10 +216,12 @@ class TasksPoseProcessor(PoseProcessor):
             show_fps: Boolean to enable FPS display
             config: Configuration object
             force_cpu: Force CPU delegate even if GPU available
+            force_gpu: Force GPU delegate (WARNING: memory leak on Apple Silicon)
             is_apple_silicon: Override Apple Silicon detection
         """
         super().__init__(osc_sender, show_fps, config)
         self.force_cpu = force_cpu
+        self.force_gpu = force_gpu
         # Use passed value or detect automatically
         self.is_apple_silicon = is_apple_silicon if is_apple_silicon is not None else IS_APPLE_SILICON
         self.use_gpu = False  # Will be set during setup
@@ -223,16 +251,22 @@ class TasksPoseProcessor(PoseProcessor):
             if self.force_cpu:
                 print("🔧 Forced CPU delegate via command line")
                 use_gpu_delegate = False
+            elif self.force_gpu:
+                print("⚠️  Forced GPU delegate via command line (WARNING: known memory leak on Apple Silicon)")
+                use_gpu_delegate = True
+            elif self.is_apple_silicon:
+                # CRITICAL: MediaPipe GPU delegate has a memory leak on Apple Silicon
+                # that causes ~1.2MB per frame accumulation. Force CPU to avoid this.
+                print("🍎 Apple Silicon detected: Using CPU delegate (GPU has known memory leak)")
+                use_gpu_delegate = False
             else:
                 use_gpu_delegate = True
-                if self.is_apple_silicon:
-                    print("🍎 Apple Silicon: GPU delegate will use SRGBA format for Metal compatibility")
             
             landmarker = None
             backend_name = None
             
             # ------------------------------------------------------------------------
-            # Try GPU delegate first (unless forced to CPU)
+            # Try GPU delegate first (unless forced to CPU or on Apple Silicon)
             # ------------------------------------------------------------------------
             if use_gpu_delegate:
                 print("🎯 Attempting GPU delegate...")
@@ -307,8 +341,13 @@ class TasksPoseProcessor(PoseProcessor):
         """
         Callback for async pose detection results from MediaPipe Tasks
         Called automatically when processing completes
+        Note: We only store the result, not the output_image to avoid memory leaks
         """
         self.results = result
+        # Decrement pending frame counter
+        self.pending_frames = max(0, self.pending_frames - 1)
+        # Explicitly don't store output_image - it's not needed and causes memory leaks
+        del output_image
     
     def process_frame(self, frame, landmarker, backend_name, timestamp_counter):
         """
@@ -328,19 +367,41 @@ class TasksPoseProcessor(PoseProcessor):
             if frame is None or frame.size == 0:
                 return frame
             
-            # Resize frame for processing if needed (virtual cameras may ignore resolution settings)
+            # Always resize frame for consistent display, regardless of processing
             camera_config = self.config.get('camera') if self.config else {}
             proc_width = camera_config.get('processing_width', 640)
             proc_height = camera_config.get('processing_height', 480)
             
             h, w = frame.shape[:2]
             if w != proc_width or h != proc_height:
-                process_frame = cv2.resize(frame, (proc_width, proc_height), interpolation=cv2.INTER_LINEAR)
+                # Use pre-allocated buffer if available and correct size
+                if (self._resize_buffer is None or 
+                    self._resize_buffer.shape[0] != proc_height or 
+                    self._resize_buffer.shape[1] != proc_width):
+                    self._resize_buffer = np.empty((proc_height, proc_width, 3), dtype=np.uint8)
+                
+                # Resize into pre-allocated buffer
+                cv2.resize(frame, (proc_width, proc_height), dst=self._resize_buffer, interpolation=cv2.INTER_LINEAR)
+                image = self._resize_buffer
             else:
-                process_frame = frame
+                image = frame
             
-            # Convert to RGB for MediaPipe
-            rgb_frame = cv2.cvtColor(process_frame, cv2.COLOR_BGR2RGB)
+            # Check if MediaPipe's async queue is backing up - skip frame if too many pending
+            if self.pending_frames >= self.max_pending_frames:
+                # Skip MediaPipe processing but return properly resized frame for display
+                self.skipped_frames += 1
+                self.update_fps(backend_name)
+                # Return a copy for display since we reuse the buffer
+                return image.copy() if image is self._resize_buffer else image
+            
+            # Convert to RGB for MediaPipe using pre-allocated buffer
+            if (self._rgb_buffer is None or 
+                self._rgb_buffer.shape[0] != image.shape[0] or 
+                self._rgb_buffer.shape[1] != image.shape[1]):
+                self._rgb_buffer = np.empty((image.shape[0], image.shape[1], 3), dtype=np.uint8)
+            
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB, dst=self._rgb_buffer)
+            rgb_frame = self._rgb_buffer
             
             # On Apple Silicon with GPU, use SRGBA format (4 channels) for Metal compatibility
             # The Metal GPU buffer doesn't support SRGB (3 channels), only SRGBA
@@ -354,10 +415,19 @@ class TasksPoseProcessor(PoseProcessor):
             
             # Process with MediaPipe Tasks (async)
             landmarker.detect_async(mp_image, timestamp_counter)
+            self.pending_frames += 1
             
-            # Use original frame for display (higher quality), resized frame was just for processing
-            image = frame.copy()
+            # Explicitly clear reference to mp_image - data was already copied
+            del mp_image
+            
             timestamp = time.time()
+            
+            # Convert RGB back to BGR for OpenCV display - reuse resize buffer if available
+            if self._resize_buffer is not None and self._resize_buffer.shape == rgb_frame.shape:
+                cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR, dst=self._resize_buffer)
+                image = self._resize_buffer
+            else:
+                image = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
             
             # Process results if available
             if self.results is not None:
@@ -387,22 +457,36 @@ class TasksPoseProcessor(PoseProcessor):
                         self.results.pose_world_landmarks if all_pose_world_landmarks else None
                     )
                     
-                    self.osc_sender.send_message("/mp/status", json.dumps({"status": len(self.results.pose_landmarks)}))
+                    self.osc_sender.send_message("/mp/status", compact_json({"status": len(self.results.pose_landmarks)}))
                     
                     # Draw all pose landmarks
                     for pose_landmark in self.results.pose_landmarks:
                         self._draw_landmarks(image, pose_landmark)
+                    
+                    # Clear temporary lists to free memory
+                    del all_pose_landmarks
+                    del all_pose_world_landmarks
                 else:
                     self.send_empty_data(timestamp)
+                
+                # Clear results after processing to prevent accumulation
+                self.results = None
             else:
                 # No results yet
                 self.send_empty_data(timestamp)
+            
+            # Clear intermediate frames to free memory
+            del rgb_frame
+            if 'rgba_frame' in locals():
+                del rgba_frame
             
             self.update_fps(backend_name)
             return image
             
         except Exception as e:
             print(f"⚠️  Tasks frame processing error: {e}")
+            # Clear results on error to prevent memory leak
+            self.results = None
             return frame
     
     def _draw_landmarks(self, image, landmarks):
@@ -502,14 +586,43 @@ class LegacyPoseProcessor(PoseProcessor):
             Annotated frame with landmarks drawn
         """
         try:
-            # Convert to RGB
-            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Resize frame for processing if needed
+            camera_config = self.config.get('camera') if self.config else {}
+            proc_width = camera_config.get('processing_width', 640)
+            proc_height = camera_config.get('processing_height', 480)
+            
+            h, w = frame.shape[:2]
+            if w != proc_width or h != proc_height:
+                # Use pre-allocated buffer if available and correct size
+                if (self._resize_buffer is None or 
+                    self._resize_buffer.shape[0] != proc_height or 
+                    self._resize_buffer.shape[1] != proc_width):
+                    self._resize_buffer = np.empty((proc_height, proc_width, 3), dtype=np.uint8)
+                
+                cv2.resize(frame, (proc_width, proc_height), dst=self._resize_buffer, interpolation=cv2.INTER_LINEAR)
+                image = self._resize_buffer
+            else:
+                # Use frame directly, avoid copy
+                image = frame
+            
+            # Convert to RGB for MediaPipe using pre-allocated buffer
+            if (self._rgb_buffer is None or 
+                self._rgb_buffer.shape[0] != image.shape[0] or 
+                self._rgb_buffer.shape[1] != image.shape[1]):
+                self._rgb_buffer = np.empty((image.shape[0], image.shape[1], 3), dtype=np.uint8)
+            
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB, dst=self._rgb_buffer)
+            rgb_image = self._rgb_buffer
             
             # Process with MediaPipe Pose
-            results = pose_context.process(image)
+            results = pose_context.process(rgb_image)
             
-            # Convert back to BGR
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # Convert back to BGR for display - reuse resize buffer
+            if self._resize_buffer is not None and self._resize_buffer.shape == rgb_image.shape:
+                cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR, dst=self._resize_buffer)
+                image = self._resize_buffer
+            else:
+                image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
             timestamp = time.time()
             
             pose_detected = bool(results.pose_landmarks)
@@ -533,11 +646,15 @@ class LegacyPoseProcessor(PoseProcessor):
                     results.pose_world_landmarks.landmark if pose_world_landmarks else None
                 )
                 
-                self.osc_sender.send_message("/mp/status", json.dumps({"status": 1}))
+                self.osc_sender.send_message("/mp/status", compact_json({"status": 1}))
                 
                 # Draw pose landmarks
                 if results.pose_landmarks:
                     self._draw_landmarks(image, results.pose_landmarks)
+                
+                # Clear temporary lists to free memory
+                del pose_landmarks
+                del pose_world_landmarks
             else:
                 self.send_empty_data(timestamp)
             
@@ -546,6 +663,9 @@ class LegacyPoseProcessor(PoseProcessor):
             
         except Exception as e:
             print(f"⚠️  Legacy frame processing error: {e}")
+            # Ensure we don't hold references on error
+            if 'image' in locals() and image is not frame:
+                del image
             return frame
     
     def _draw_landmarks(self, image, pose_landmarks):
