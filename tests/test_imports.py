@@ -45,3 +45,21 @@ def test_package_getattr_raises_attributeerror_for_unknown_name():
         pass
     else:
         raise AssertionError("expected AttributeError for an unknown src.* name")
+
+
+def test_spec_hiddenimports_cover_every_lazy_export():
+    # PyInstaller can't see the importlib calls behind src.__getattr__, so a
+    # submodule missing from gesture.spec's hiddenimports is left out of the
+    # bundle and only fails in the frozen app (#86).
+    import ast
+    import os
+    import src
+    spec_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'gesture.spec')
+    with open(spec_path) as f:
+        tree = ast.parse(f.read())
+    hidden = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == 'hiddenimports':
+            hidden |= set(ast.literal_eval(node.value))
+    needed = {f'src.{name}' for name in src._EXPORTS.values()}
+    assert not needed - hidden, f"add to gesture.spec hiddenimports: {sorted(needed - hidden)}"
