@@ -110,6 +110,7 @@ a = Analysis(
     hiddenimports=[
         'NDIlib',
         'src.osc_sender',
+        'src.osc_protocol',
         'src.pose_utils',
         'src.model_downloader',
         'src.pose_processor',
